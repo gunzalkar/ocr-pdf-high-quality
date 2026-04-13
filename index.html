@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Engine | High-Quality Text Extraction</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root { --bg: #09090b; --panel: #18181b; --border: #27272a; --accent: #22d3ee; --accent-glow: rgba(34,211,238,0.15); --text: #f4f4f5; --text-muted: #a1a1aa; --danger: #ef4444; --success: #22c55e; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--text); min-height: 100vh; }
+        
+        .bg-grid { position: fixed; inset: 0; background-image: linear-gradient(rgba(34,211,238,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.03) 1px, transparent 1px); background-size: 40px 40px; z-index: -1; }
+        .bg-glow { position: fixed; top: -200px; left: 50%; transform: translateX(-50%); width: 600px; height: 400px; background: radial-gradient(ellipse, rgba(34,211,238,0.08), transparent 70%); z-index: -1; }
+        
+        .container { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+        
+        header { text-align: center; margin-bottom: 2.5rem; }
+        h1 { font-family: 'JetBrains Mono', monospace; font-size: 2rem; background: linear-gradient(135deg, var(--accent), #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem; }
+        .subtitle { color: var(--text-muted); font-size: 0.95rem; max-width: 600px; margin: 0 auto; }
+        .badge-row { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+        .badge { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; padding: 0.3rem 0.6rem; border-radius: 4px; background: var(--accent-glow); color: var(--accent); border: 1px solid rgba(34,211,238,0.2); }
+        
+        /* Drop Zone */
+        .drop-zone { border: 2px dashed var(--border); border-radius: 16px; padding: 3rem 2rem; text-align: center; cursor: pointer; transition: all 0.3s; background: rgba(24,24,27,0.6); position: relative; overflow: hidden; }
+        .drop-zone::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(34,211,238,0.02), rgba(168,139,250,0.02)); opacity: 0; transition: opacity 0.3s; }
+        .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(34,211,238,0.03); }
+        .drop-zone:hover::before, .drop-zone.dragover::before { opacity: 1; }
+        .drop-icon { font-size: 3rem; margin-bottom: 1rem; filter: grayscale(0.3); }
+        .drop-title { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .drop-sub { color: var(--text-muted); font-size: 0.85rem; line-height: 1.6; }
+        .drop-sub strong { color: var(--text); }
+        input[type="file"] { display: none; }
+        .browse-btn { display: inline-block; margin-top: 1rem; background: rgba(34,211,238,0.1); color: var(--accent); border: 1px solid var(--accent); padding: 0.6rem 1.5rem; border-radius: 6px; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.85rem; transition: all 0.2s; }
+        .browse-btn:hover { background: var(--accent); color: #000; }
+        
+        /* File List */
+        .file-list { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+        .file-item { display: flex; align-items: center; gap: 0.75rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.85rem; animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        .file-item .file-icon { font-size: 1.2rem; flex-shrink: 0; }
+        .file-item .file-name { flex: 1; font-family: 'JetBrains Mono', monospace; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .file-item .file-size { color: var(--text-muted); font-size: 0.75rem; flex-shrink: 0; }
+        .file-item .remove-btn { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 1.1rem; padding: 0 0.25rem; transition: opacity 0.2s; flex-shrink: 0; }
+        .file-item .remove-btn:hover { opacity: 0.7; }
+        .total-size { text-align: right; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem; font-family: 'JetBrains Mono', monospace; }
+        .total-size.over-limit { color: var(--danger); }
+
+        /* Controls */
+        .controls { display: flex; gap: 1rem; margin-top: 1.5rem; flex-wrap: wrap; }
+        .controls select, .controls button { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; border-radius: 6px; padding: 0.7rem 1.2rem; }
+        .controls select { background: var(--panel); color: var(--text); border: 1px solid var(--border); cursor: pointer; outline: none; flex: 1; min-width: 150px; }
+        .controls select:focus { border-color: var(--accent); }
+        .process-btn { background: linear-gradient(135deg, var(--accent), #a78bfa); color: #000; border: none; cursor: pointer; font-weight: 700; flex: 2; min-width: 200px; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; }
+        .process-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(34,211,238,0.3); }
+        .process-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        /* Progress */
+        .progress-section { margin-top: 1.5rem; display: none; }
+        .progress-section.active { display: block; }
+        .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .progress-label { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--accent); }
+        .progress-pct { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted); }
+        .progress-bar { width: 100%; height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #a78bfa); border-radius: 3px; transition: width 0.3s; width: 0%; }
+        .progress-detail { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-family: 'JetBrains Mono', monospace; }
+
+        /* Results */
+        .results-section { margin-top: 2rem; display: none; }
+        .results-section.active { display: block; }
+        .results-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .results-title { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-size: 1.1rem; }
+        .download-zip-btn { background: linear-gradient(135deg, var(--success), #16a34a); color: #fff; border: none; padding: 0.6rem 1.5rem; border-radius: 6px; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.85rem; transition: all 0.2s; }
+        .download-zip-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 15px rgba(34,197,94,0.3); }
+        .result-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 1rem; overflow: hidden; }
+        .result-card-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border); cursor: pointer; }
+        .result-card-header:hover { background: rgba(34,211,238,0.03); }
+        .result-filename { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--accent); display: flex; align-items: center; gap: 0.5rem; }
+        .result-meta { font-size: 0.75rem; color: var(--text-muted); }
+        .result-body { padding: 1rem; max-height: 300px; overflow-y: auto; display: none; }
+        .result-body.open { display: block; }
+        .result-body pre { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text); white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+        .result-body::-webkit-scrollbar { width: 4px; }
+        .result-body::-webkit-scrollbar-track { background: var(--panel); }
+        .result-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Footer */
+        .footer-link { text-align: center; margin-top: 3rem; }
+        .footer-link a { color: var(--accent); font-family: 'JetBrains Mono', monospace; text-decoration: none; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); display: inline-block; transition: all 0.2s; font-size: 0.85rem; }
+        .footer-link a:hover { border-color: var(--accent); background: var(--accent-glow); }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            h1 { font-size: 1.5rem; }
+            .drop-zone { padding: 2rem 1rem; }
+            .controls { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-glow"></div>
+    
+    <div class="container">
+        <header>
+            <h1>OCR_Extract v2.0</h1>
+            <p class="subtitle">High-quality text extraction from PDFs & images. Powered by Tesseract.js — runs entirely in your browser. No uploads to any server.</p>
+            <div class="badge-row">
+                <span class="badge">Client-Side</span>
+                <span class="badge">Tesseract.js</span>
+                <span class="badge">PDF.js</span>
+                <span class="badge">ZIP Export</span>
+                <span class="badge">50MB Limit</span>
+            </div>
+        </header>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon">📄</div>
+            <div class="drop-title">Drop files here or click to browse</div>
+            <div class="drop-sub">
+                Supports <strong>PDF</strong>, <strong>PNG</strong>, <strong>JPG</strong>, <strong>JPEG</strong>, <strong>BMP</strong>, <strong>TIFF</strong>, <strong>WEBP</strong>, <strong>GIF</strong><br>
+                Multiple files allowed • Max <strong>50 MB</strong> total
+            </div>
+            <span class="browse-btn" id="browseBtn">Browse Files</span>
+            <input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.tiff,.tif,.webp,.gif,image/*,application/pdf">
+        </div>
+
+        <!-- File List -->
+        <div class="file-list" id="fileList"></div>
+        <div class="total-size" id="totalSize"></div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <select id="langSelect">
+                <option value="eng">English</option>
+                <option value="hin">Hindi</option>
+                <option value="mar">Marathi</option>
+                <option value="ara">Arabic</option>
+                <option value="fra">French</option>
+                <option value="deu">German</option>
+                <option value="spa">Spanish</option>
+                <option value="jpn">Japanese</option>
+                <option value="chi_sim">Chinese (Simplified)</option>
+                <option value="kor">Korean</option>
+            </select>
+            <button class="process-btn" id="processBtn" disabled>⚡ Extract Text</button>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <span class="progress-label" id="progressLabel">Initializing OCR engine...</span>
+                <span class="progress-pct" id="progressPct">0%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="progress-detail" id="progressDetail"></div>
+        </div>
+
+        <!-- Results -->
+        <div class="results-section" id="resultsSection">
+            <div class="results-header">
+                <span class="results-title">[ EXTRACTION RESULTS ]</span>
+                <button class="download-zip-btn" id="downloadZipBtn">⬇ Download ZIP</button>
+            </div>
+            <div id="resultsContainer"></div>
+        </div>
+
+        <div class="footer-link">
+            <a href="https://github.com/gunzalkar/ocr-pdf-high-quality" target="_blank">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:middle;margin-right:6px;">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>View Source on GitHub
+            </a>
+        </div>
+    </div>
+
+    <script>
+        // PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+        let files = [];
+        let results = {};
+
+        // DOM refs
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const browseBtn = document.getElementById('browseBtn');
+        const fileList = document.getElementById('fileList');
+        const totalSizeEl = document.getElementById('totalSize');
+        const processBtn = document.getElementById('processBtn');
+        const progressSection = document.getElementById('progressSection');
+        const progressLabel = document.getElementById('progressLabel');
+        const progressPct = document.getElementById('progressPct');
+        const progressFill = document.getElementById('progressFill');
+        const progressDetail = document.getElementById('progressDetail');
+        const resultsSection = document.getElementById('resultsSection');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const downloadZipBtn = document.getElementById('downloadZipBtn');
+
+        // Helpers
+        const formatSize = (bytes) => {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        };
+
+        const getFileIcon = (name) => {
+            const ext = name.split('.').pop().toLowerCase();
+            if (ext === 'pdf') return '📕';
+            if (['png','jpg','jpeg','webp','gif'].includes(ext)) return '🖼️';
+            if (['bmp','tiff','tif'].includes(ext)) return '🎨';
+            return '📄';
+        };
+
+        const getTotalSize = () => files.reduce((sum, f) => sum + f.size, 0);
+
+        // Render file list
+        function renderFiles() {
+            fileList.innerHTML = '';
+            files.forEach((f, i) => {
+                const el = document.createElement('div');
+                el.className = 'file-item';
+                el.innerHTML = `
+                    <span class="file-icon">${getFileIcon(f.name)}</span>
+                    <span class="file-name" title="${f.name}">${f.name}</span>
+                    <span class="file-size">${formatSize(f.size)}</span>
+                    <button class="remove-btn" data-idx="${i}" title="Remove">✕</button>
+                `;
+                fileList.appendChild(el);
+            });
+
+            const total = getTotalSize();
+            if (files.length > 0) {
+                totalSizeEl.textContent = `${files.length} file${files.length > 1 ? 's' : ''} • ${formatSize(total)} / ${formatSize(MAX_SIZE)}`;
+                totalSizeEl.className = total > MAX_SIZE ? 'total-size over-limit' : 'total-size';
+            } else {
+                totalSizeEl.textContent = '';
+            }
+
+            processBtn.disabled = files.length === 0 || total > MAX_SIZE;
+        }
+
+        // Add files
+        function addFiles(newFiles) {
+            const allowed = ['pdf','png','jpg','jpeg','bmp','tiff','tif','webp','gif'];
+            for (const f of newFiles) {
+                const ext = f.name.split('.').pop().toLowerCase();
+                if (!allowed.includes(ext)) {
+                    alert(`Unsupported file type: .${ext}`);
+                    continue;
+                }
+                // Avoid duplicates
+                if (!files.some(ex => ex.name === f.name && ex.size === f.size)) {
+                    files.push(f);
+                }
+            }
+            if (getTotalSize() > MAX_SIZE) {
+                alert('Total file size exceeds 50 MB limit!');
+            }
+            renderFiles();
+        }
+
+        // Event listeners
+        browseBtn.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => { addFiles(e.target.files); fileInput.value = ''; });
+
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); addFiles(e.dataTransfer.files); });
+
+        fileList.addEventListener('click', (e) => {
+            if (e.target.classList.contains('remove-btn')) {
+                files.splice(parseInt(e.target.dataset.idx), 1);
+                renderFiles();
+            }
+        });
+
+        // PDF to images
+        async function pdfToImages(file, scale = 2.0) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const images = [];
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport }).promise;
+                images.push({ canvas, pageNum: i });
+            }
+            return images;
+        }
+
+        // OCR a single canvas/image
+        async function ocrImage(source, lang, onProgress) {
+            const worker = await Tesseract.createWorker(lang, 1, {
+                logger: m => {
+                    if (m.status === 'recognizing text' && m.progress) {
+                        onProgress(m.progress);
+                    }
+                }
+            });
+            const { data: { text } } = await worker.recognize(source);
+            await worker.terminate();
+            return text;
+        }
+
+        // Process all files
+        processBtn.addEventListener('click', async () => {
+            if (files.length === 0) return;
+            
+            results = {};
+            resultsContainer.innerHTML = '';
+            resultsSection.classList.remove('active');
+            progressSection.classList.add('active');
+            processBtn.disabled = true;
+
+            const lang = document.getElementById('langSelect').value;
+            let totalUnits = 0;
+            let completedUnits = 0;
+
+            // Calculate total work units
+            for (const f of files) {
+                if (f.name.toLowerCase().endsWith('.pdf')) {
+                    try {
+                        const ab = await f.arrayBuffer();
+                        const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+                        totalUnits += pdf.numPages;
+                    } catch { totalUnits += 1; }
+                } else {
+                    totalUnits += 1;
+                }
+            }
+
+            for (let fi = 0; fi < files.length; fi++) {
+                const file = files[fi];
+                const baseName = file.name.replace(/\.[^.]+$/, '');
+
+                progressLabel.textContent = `Processing: ${file.name}`;
+                progressDetail.textContent = `File ${fi + 1} of ${files.length}`;
+
+                try {
+                    if (file.name.toLowerCase().endsWith('.pdf')) {
+                        // PDF: convert each page to image, then OCR
+                        progressDetail.textContent += ' — Rendering PDF pages...';
+                        const pages = await pdfToImages(file);
+                        let fullText = '';
+
+                        for (let pi = 0; pi < pages.length; pi++) {
+                            progressLabel.textContent = `Processing: ${file.name} (page ${pi + 1}/${pages.length})`;
+                            const pageText = await ocrImage(pages[pi].canvas, lang, (p) => {
+                                const overall = ((completedUnits + p) / totalUnits) * 100;
+                                progressFill.style.width = overall + '%';
+                                progressPct.textContent = Math.round(overall) + '%';
+                            });
+                            fullText += `--- Page ${pi + 1} ---\n${pageText.trim()}\n\n`;
+                            completedUnits++;
+                        }
+                        results[baseName + '.txt'] = fullText.trim();
+                    } else {
+                        // Image: direct OCR
+                        const text = await ocrImage(file, lang, (p) => {
+                            const overall = ((completedUnits + p) / totalUnits) * 100;
+                            progressFill.style.width = overall + '%';
+                            progressPct.textContent = Math.round(overall) + '%';
+                        });
+                        results[baseName + '.txt'] = text.trim();
+                        completedUnits++;
+                    }
+                } catch (err) {
+                    results[baseName + '_error.txt'] = `Error processing file: ${err.message}`;
+                    completedUnits++;
+                }
+
+                const overall = (completedUnits / totalUnits) * 100;
+                progressFill.style.width = overall + '%';
+                progressPct.textContent = Math.round(overall) + '%';
+            }
+
+            // Show results
+            progressSection.classList.remove('active');
+            resultsSection.classList.add('active');
+            processBtn.disabled = false;
+
+            for (const [filename, text] of Object.entries(results)) {
+                const card = document.createElement('div');
+                card.className = 'result-card';
+                const charCount = text.length;
+                const wordCount = text.split(/\s+/).filter(w => w).length;
+                card.innerHTML = `
+                    <div class="result-card-header">
+                        <span class="result-filename">📝 ${filename}</span>
+                        <span class="result-meta">${wordCount} words • ${charCount} chars</span>
+                    </div>
+                    <div class="result-body">
+                        <pre>${escapeHtml(text || '(No text extracted)')}</pre>
+                    </div>
+                `;
+                card.querySelector('.result-card-header').addEventListener('click', () => {
+                    card.querySelector('.result-body').classList.toggle('open');
+                });
+                resultsContainer.appendChild(card);
+            }
+        });
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Download ZIP
+        downloadZipBtn.addEventListener('click', async () => {
+            const zip = new JSZip();
+            for (const [filename, text] of Object.entries(results)) {
+                zip.file(filename, text);
+            }
+            const blob = await zip.generateAsync({ type: 'blob' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'ocr_results.zip';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        });
+    </script>
+</body>
+</html>
